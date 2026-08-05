@@ -918,7 +918,7 @@ else renderGate();
    places resolves to whichever was saved last. Nothing here blocks the UI — if the
    network is down the app keeps working on local storage and pushes when it returns. */
 
-const SYNC_URL = 'https://jsonblob.com/api/jsonBlob/019fd230-e761-72d6-87a5-3f1224e1a82b';
+const SYNC_URL = 'https://jsonblob.com/api/jsonBlob/019fd23e-e9e9-75a5-99a2-6909b76c5c49';
 const SYNC_POLL_MS = 15000;
 const PUSH_DEBOUNCE_MS = 1500;
 
