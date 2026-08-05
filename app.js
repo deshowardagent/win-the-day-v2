@@ -28,10 +28,20 @@ const BACKFILL_DATES = ['2026-08-04'];
 
 const STORAGE_KEY = 'wtd_v2_state';
 
+// Hard reset — 2026-08-05 10:01 EDT. Everything written before this instant is dropped on
+// load and is never merged or pushed again. Without it, wiping the shared store achieves
+// nothing: the first device that still had the old logs cached would push them all back.
+const RESET_AT = 1785938477000;
+function afterReset(e) { return ((e && e._ts) || 0) >= RESET_AT; }
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const s = JSON.parse(raw);
+      s.entries = (s.entries || []).filter(afterReset);
+      return s;
+    }
   } catch (e) { /* fall through */ }
   return { currentUser: null, entries: [], prizeLog: [] };
 }
@@ -125,6 +135,9 @@ function blankEntry(user, dstr) {
 }
 function findEntry(user, dstr) { return state.entries.find(e => e.user === user && e.date === dstr); }
 function getOrCreateEntry(user, dstr) {
+  // No name picked yet (someone typing before the gate) — hand back a detached blank so we
+  // never persist or sync an ownerless "null_<date>" row, which used to litter the store.
+  if (!user) return blankEntry(null, dstr);
   let e = findEntry(user, dstr);
   if (!e) { e = blankEntry(user, dstr); state.entries.push(e); }
   return e;
@@ -305,8 +318,13 @@ function renderToday() {
     : '';
 }
 
-function renderGoals(entry, locked, submitted) {
-  const wrap = document.getElementById('goalsList');
+// Also used by the Tomorrow tab to edit a future day in place — pass that tab's container.
+// noComplete hides the tick boxes: you can write a day's goals early, but you can't mark
+// them done before the day has happened.
+function renderGoals(entry, locked, submitted, wrap, noComplete) {
+  wrap = wrap || document.getElementById('goalsList');
+  const redraw = () => renderGoals(entry, locked, submitted, wrap, noComplete);
+  const rescore = () => { if (!noComplete) refreshScorePreview(entry); };
   wrap.innerHTML = '';
   entry.goals.forEach((g, gi) => {
     const card = document.createElement('div');
@@ -339,13 +357,13 @@ function renderGoals(entry, locked, submitted) {
     cat.addEventListener('change', () => { g.category = cat.value; saveState(entry); });
     top.appendChild(cat);
 
-    if (!g.subItems.length) {
-      const done = document.createElement('input');
+    if (!g.subItems.length && !noComplete) {
+      const done = document.createElement("input");
       done.type = 'checkbox'; done.className = 'goal-complete-toggle';
       done.checked = !!g.completedManual;
       done.disabled = submitted;
       done.addEventListener('change', () => {
-        g.completedManual = done.checked; saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+        g.completedManual = done.checked; saveState(entry); redraw(); rescore();
       });
       top.appendChild(done);
     }
@@ -358,9 +376,9 @@ function renderGoals(entry, locked, submitted) {
         const row = document.createElement('div');
         row.className = 'subitem-row';
         const cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.checked = si.done; cb.disabled = submitted;
+        cb.type = "checkbox"; cb.checked = si.done; cb.disabled = submitted || noComplete;
         cb.addEventListener('change', () => {
-          si.done = cb.checked; saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+          si.done = cb.checked; saveState(entry); redraw(); rescore();
         });
         row.appendChild(cb);
         const txt = document.createElement('input');
@@ -373,7 +391,7 @@ function renderGoals(entry, locked, submitted) {
           const rm = document.createElement('button');
           rm.className = 'subitem-remove'; rm.textContent = '×'; rm.type = 'button';
           rm.addEventListener('click', () => {
-            g.subItems.splice(si_i, 1); saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+            g.subItems.splice(si_i, 1); saveState(entry); redraw(); rescore();
           });
           row.appendChild(rm);
         }
@@ -390,7 +408,7 @@ function renderGoals(entry, locked, submitted) {
       addBtn.textContent = '+ sub-item';
       addBtn.disabled = g.subItems.length >= 5;
       addBtn.addEventListener('click', () => {
-        g.subItems.push({ text: "", done: false }); saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+        g.subItems.push({ text: "", done: false }); saveState(entry); redraw(); rescore();
       });
       actions.appendChild(addBtn);
       card.appendChild(actions);
@@ -461,11 +479,70 @@ document.getElementById('submitDay').addEventListener('click', () => {
 
 // The shared plan-ahead board: everyone's goals for the next day, visible as soon as they post.
 // Posting early is the safe play — it can't DQ you, and it locks itself at the 5:00 AM gate.
+// Your own editor, right on the Tomorrow tab — same goal fields as the Today ledger
+// (categories, sub-items), minus the tick boxes, since a day you can't have lived yet
+// can't have anything completed in it.
+function renderTomorrowEditor(dstr) {
+  const box = document.getElementById('tmEditor');
+  box.innerHTML = '';
+  if (!state.currentUser) return;
+
+  const entry = getOrCreateEntry(state.currentUser, dstr);
+  const locked = fieldsLocked(entry);
+  const written = entry.goals.filter(g => g.title.trim()).length;
+
+  const head = document.createElement('div');
+  head.className = 'tm-ed-head';
+  const h = document.createElement('span');
+  h.className = 'tm-ed-title';
+  h.textContent = `Your five for ${prettyDate(dstr)}`;
+  const note = document.createElement('span');
+  note.className = 'tm-ed-note';
+  note.textContent = locked
+    ? 'Locked — the 5:00 AM gate has closed on this day.'
+    : entry.goalsCreatedAt
+    ? `Posted ${prettyTime(entry.goalsCreatedAt)} · still editable until 5:00 AM`
+    : 'Nothing posted yet. Writing these now cannot DQ you.';
+  head.append(h, note);
+  box.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'goals-list';
+  box.appendChild(list);
+  renderGoals(entry, locked, false, list, true);
+
+  const actions = document.createElement('div');
+  actions.className = 'tm-ed-actions';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-primary';
+  btn.disabled = locked;
+  btn.textContent = locked ? 'Locked in' : entry.goalsCreatedAt ? 'Update posted goals' : "Post tomorrow's goals";
+  btn.addEventListener('click', () => {
+    if (fieldsLocked(entry)) return;
+    if (entry.goals.some(g => !g.title.trim()) &&
+        !confirm('Some of the 5 goal slots are empty. Post anyway?')) return;
+    // First commit is what counts against the gate; later edits before 5:00 AM don't re-stamp it.
+    if (!entry.goalsCreatedAt) {
+      entry.goalsCreatedAt = Date.now();
+      entry.dq = new Date() > deadlineFor(entry.date);
+    }
+    saveState(entry);
+    renderTomorrow();
+  });
+  const count = document.createElement('span');
+  count.className = 'tm-ed-count';
+  count.textContent = `${written} of 5 written`;
+  actions.append(btn, count);
+  box.appendChild(actions);
+}
+
 function renderTomorrow() {
   const dstr = tomorrowStr();
   const gate = deadlineFor(dstr);
   const closed = new Date() > gate;
   document.getElementById('tomorrowTitle').textContent = `Goals for ${prettyDate(dstr)}`;
+  renderTomorrowEditor(dstr);
 
   const grid = document.getElementById('tomorrowGrid');
   grid.innerHTML = '';
@@ -863,7 +940,8 @@ function activeViewName() {
 function safeToRerender() {
   const el = document.activeElement;
   const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
-  return !(typing && activeViewName() === 'today');
+  const v = activeViewName();
+  return !(typing && (v === 'today' || v === 'tomorrow'));
 }
 
 function syncNow() {
@@ -878,6 +956,7 @@ function syncNow() {
       Object.keys(remote).forEach(k => {
         const rv = remote[k];
         if (!rv || !rv.user || !rv.date) return;
+        if (!afterReset(rv)) return;   // pre-reset leftovers from a stale device
         const mine = findEntry(rv.user, rv.date);
         if (!mine) { state.entries.push(rv); changed = true; }
         else if ((rv._ts || 0) > (mine._ts || 0)) {
@@ -889,6 +968,8 @@ function syncNow() {
         const rv = remote[keyOf(e)];
         if (!rv || (e._ts || 0) > (rv._ts || 0)) diverged = true;
       });
+      // Stale pre-reset rows sitting in the store are themselves a reason to push.
+      if (Object.keys(remote).some(k => !afterReset(remote[k]))) diverged = true;
 
       if (changed) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -896,9 +977,11 @@ function syncNow() {
       }
 
       if (diverged || needPush) {
+        // Carrying only post-reset entries forward means any client running the new code
+        // actively scrubs pre-reset junk out of the shared store rather than preserving it.
         const out = { entries: {} };
-        Object.keys(remote).forEach(k => { out.entries[k] = remote[k]; });
-        state.entries.forEach(e => {
+        Object.keys(remote).forEach(k => { if (afterReset(remote[k])) out.entries[k] = remote[k]; });
+        state.entries.filter(afterReset).forEach(e => {
           const k = keyOf(e), rv = out.entries[k];
           if (!rv || (e._ts || 0) >= (rv._ts || 0)) out.entries[k] = e;
         });
