@@ -39,7 +39,10 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
+      const before = (s.entries || []).length;
       s.entries = (s.entries || []).filter(afterReset);
+      // Write the pruned list straight back so the dropped logs don't linger on the device.
+      if (s.entries.length !== before) localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
       return s;
     }
   } catch (e) { /* fall through */ }
