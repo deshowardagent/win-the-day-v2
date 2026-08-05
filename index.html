@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Win the Day — Accountability Ledger</title>
+<meta name="description" content="Daily accountability ledger. 5 goals. One gate: 5:00 AM." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="gate" class="gate">
+  <div class="gate-inner">
+    <p class="gate-eyebrow">Before you log anything</p>
+    <h1 class="gate-title">WIN&nbsp;THE&nbsp;DAY</h1>
+    <p class="gate-sub">Six people. Three pairs. One gate that closes at 5:00&nbsp;AM. Pick your name to open your ledger.</p>
+    <div class="pair-row" id="pairRow"></div>
+    <p class="gate-foot">Effective Wednesday, August 4 — 5:00 AM. This link replaces the July tracker.</p>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">WIN&nbsp;THE&nbsp;DAY</span>
+      <span class="brand-sub">accountability ledger</span>
+    </div>
+
+    <div class="gate-clock" id="gateClock" title="Time until the goal-lock deadline">
+      <span class="gc-label" id="gcLabel">GATE CLOSES</span>
+      <span class="gc-time" id="gcTime">--:--:--</span>
+    </div>
+
+    <div class="whoami">
+      <div class="who-name" id="whoName">—</div>
+      <div class="who-pair" id="whoPair">paired with —</div>
+      <button class="switch-user" id="switchUser">switch</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="today">Today</button>
+    <button class="tab" data-view="leaderboard">Leaderboard</button>
+    <button class="tab" data-view="week">My Week</button>
+    <button class="tab" data-view="book">Book</button>
+    <button class="tab" data-view="rules">Rules</button>
+    <button class="tab admin-only hidden" data-view="admin">Admin</button>
+  </nav>
+
+  <main class="views">
+
+    <!-- TODAY -->
+    <section class="view" id="view-today">
+      <div class="ledger-page">
+        <div class="lp-head">
+          <div class="lp-head-left">
+            <span class="lp-label">Entry for</span>
+            <span class="lp-date" id="entryDate">—</span>
+            <span class="lp-daytype" id="entryDayType">WEEKDAY</span>
+          </div>
+          <div class="lp-stamp" id="lpStamp" hidden></div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label">Lesson learned <span class="field-hint">1–3 sentences</span></label>
+          <textarea id="lessonLearned" class="paper-input" rows="2" placeholder="The biggest lesson, realization, or takeaway from today."></textarea>
+        </div>
+
+        <div class="goals-head">
+          <span class="field-label">Five goals <span class="field-hint">needle-movers, not tasks — bundle related actions into one goal, up to 5 sub-items</span></span>
+          <span class="lock-note" id="lockNote"></span>
+        </div>
+
+        <div id="goalsList" class="goals-list"></div>
+
+        <div class="field-row two-col">
+          <div>
+            <label class="field-label">Tomorrow's focus <span class="field-hint">1–2 sentences</span></label>
+            <textarea id="tomorrowFocus" class="paper-input" rows="2" placeholder="Your single highest priority tomorrow, and why."></textarea>
+          </div>
+          <div>
+            <label class="field-label">Daily affirmation <span class="field-hint">one line</span></label>
+            <input id="affirmation" class="paper-input" type="text" placeholder="One line reinforcing your mindset and commitment." />
+          </div>
+        </div>
+
+        <div class="field-row two-col">
+          <div>
+            <label class="field-label">Book page reached</label>
+            <input id="bookPage" class="paper-input mono" type="number" min="0" placeholder="e.g. 63" />
+          </div>
+          <div class="score-preview">
+            <span class="field-label">Today's score</span>
+            <div class="score-big" id="scoreBig">—</div>
+            <div class="score-status" id="scoreStatus"></div>
+          </div>
+        </div>
+
+        <div class="lp-actions">
+          <button id="saveGoals" class="btn btn-ghost">Save goals</button>
+          <button id="submitDay" class="btn btn-primary">Submit today's log</button>
+        </div>
+        <p class="lp-note" id="lpNote"></p>
+      </div>
+    </section>
+
+    <!-- LEADERBOARD -->
+    <section class="view hidden" id="view-leaderboard">
+      <h2 class="view-title">Today's leaderboard</h2>
+      <p class="local-note">Local mode — this device only shows entries submitted here. Ask others to read their score out at check-in until the shared board is live.</p>
+      <div class="table-wrap"><table class="ledger-table" id="leaderboardTable"></table></div>
+    </section>
+
+    <!-- WEEK -->
+    <section class="view hidden" id="view-week">
+      <h2 class="view-title">My week</h2>
+      <div class="week-summary" id="weekSummary"></div>
+      <div class="table-wrap"><table class="ledger-table" id="weekTable"></table></div>
+    </section>
+
+    <!-- BOOK -->
+    <section class="view hidden" id="view-book">
+      <h2 class="view-title">Book tracker</h2>
+      <p class="local-note">Benchmark: page 60. One grace day if you fall behind — after that you're held to the standard track.</p>
+      <div class="table-wrap"><table class="ledger-table" id="bookTable"></table></div>
+    </section>
+
+    <!-- RULES -->
+    <section class="view hidden" id="view-rules">
+      <article class="rules-doc" id="rulesDoc"></article>
+    </section>
+
+    <!-- ADMIN -->
+    <section class="view hidden" id="view-admin">
+      <h2 class="view-title">Admin — Des</h2>
+
+      <div class="admin-grid">
+        <div class="admin-panel">
+          <h3>Team pairing</h3>
+          <div id="adminPairs"></div>
+        </div>
+        <div class="admin-panel">
+          <h3>Weekly rollup <span class="field-hint">70% target</span></h3>
+          <div id="adminWeekly"></div>
+        </div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Daily leaderboard — all statuses</h3>
+        <div class="table-wrap"><table class="ledger-table" id="adminDaily"></table></div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>DQ log</h3>
+        <div class="table-wrap"><table class="ledger-table" id="adminDQ"></table></div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Book progress</h3>
+        <div class="table-wrap"><table class="ledger-table" id="adminBook"></table></div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Prize log <span class="field-hint">$100 weekly prize</span></h3>
+        <form id="prizeForm" class="prize-form">
+          <input id="prizeWinner" class="paper-input" type="text" placeholder="Winner(s)" />
+          <input id="prizeAmount" class="paper-input mono" type="text" placeholder="$100" />
+          <input id="prizeDate" class="paper-input mono" type="date" />
+          <input id="prizeNote" class="paper-input" type="text" placeholder="Note (optional)" />
+          <button type="submit" class="btn btn-ghost">Log prize</button>
+        </form>
+        <div class="table-wrap"><table class="ledger-table" id="adminPrizes"></table></div>
+      </div>
+
+      <div class="admin-panel">
+        <h3>Legacy data <span class="field-hint">pre-Aug 4, 10-goal scoring</span></h3>
+        <p class="local-note">The July tracker's data lives on the old link, which is currently unreachable, so nothing has been imported yet. Paste exported JSON here if you get it back — it will be tagged "legacy" and kept out of live comparisons.</p>
+        <textarea id="legacyImport" class="paper-input mono" rows="3" placeholder="[ ...legacy entries json... ]"></textarea>
+        <button id="legacyImportBtn" class="btn btn-ghost">Import as legacy</button>
+        <div class="table-wrap"><table class="ledger-table" id="adminLegacy"></table></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
