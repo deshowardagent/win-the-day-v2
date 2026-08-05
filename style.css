@@ -149,6 +149,13 @@ input,textarea{ font-family: inherit; }
 .lp-stamp.fail{ color: var(--red); }
 .lp-stamp.dq{ color: var(--red); }
 
+.date-picker{ display:flex; gap:.5rem; margin-bottom:1rem; flex-wrap:wrap; }
+.date-pill{
+  font-family: var(--f-mono); font-size:.7rem; border:1px solid var(--rule); border-radius:20px;
+  padding:.3rem .75rem; background: var(--paper-2); color: var(--ink-muted);
+}
+.date-pill.active{ background: var(--ember); color:#1B0800; border-color: var(--ember); font-weight:700; }
+
 .field-row{ margin-bottom:1rem; }
 .field-row.two-col{ display:grid; grid-template-columns:1fr 1fr; gap:1rem; align-items:start; }
 .field-label{ font-family: var(--f-ui); font-weight:600; font-size:.82rem; display:block; margin-bottom:.35rem; }
@@ -231,6 +238,14 @@ input,textarea{ font-family: inherit; }
 .status-pill.dq{ background: rgba(179,38,30,.3); color:#FF8A7A; font-weight:700; }
 
 /* ---------- week ---------- */
+.week-nav{ display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; }
+.week-nav-btn{
+  background:none; border:1px solid var(--ink-3); color: var(--on-ink); font-family: var(--f-mono);
+  font-size:.72rem; padding:.35rem .7rem; border-radius:6px;
+}
+.week-nav-btn:hover:not(:disabled){ border-color: var(--ember); color: var(--ember); }
+.week-nav-btn:disabled{ opacity:.35; cursor:not-allowed; }
+.week-nav-label{ font-family: var(--f-display); font-weight:800; font-size:1.15rem; }
 .week-summary{ display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.2rem; }
 .week-stat{ background: var(--ink-2); border:1px solid var(--ink-3); border-radius:8px; padding:.8rem 1.1rem; min-width:140px; }
 .week-stat-label{ font-family: var(--f-mono); font-size:.62rem; letter-spacing:.1em; text-transform:uppercase; color: var(--on-ink-mut); }

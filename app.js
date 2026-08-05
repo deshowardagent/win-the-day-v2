@@ -19,6 +19,11 @@ const DQ_EXEMPT_DATES = ['2026-08-04'];
 function isDqExempt(dstr) { return DQ_EXEMPT_DATES.includes(dstr); }
 function effectiveDq(entry) { return entry.dq && !isDqExempt(entry.date); }
 
+// Day 1 of the program. Weeks are Monday–Sunday; nothing before this date counts
+// toward any weekly average. Aug 4 is also open for one-time catch-up logging today.
+const PROGRAM_START = '2026-08-04';
+const BACKFILL_DATES = ['2026-08-04'];
+
 /* ===================== state ===================== */
 
 const STORAGE_KEY = 'wtd_v2_state';
@@ -33,6 +38,8 @@ function loadState() {
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
 let state = loadState();
+let activeEntryDate = todayStr();
+let currentWeekMonday = mondayStrOf(todayStr());
 
 /* ===================== date helpers ===================== */
 
@@ -52,14 +59,49 @@ function prettyDate(dstr) {
 function prettyTime(ts) {
   return ts ? new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '—';
 }
-function lastNDates(n) {
+// Calendar weeks, Monday–Sunday. mondayStrOf() anchors any date to the Monday
+// that starts its week; weekDatesFrom() lists that week's 7 date strings.
+function mondayStrOf(dstr) {
+  const d = new Date(dstr + 'T12:00:00');
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return dateStr(d);
+}
+function weekDatesFrom(mondayStr) {
   const out = [];
-  for (let i = 0; i < n; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
+  const d = new Date(mondayStr + 'T12:00:00');
+  for (let i = 0; i < 7; i++) {
     out.push(dateStr(d));
+    d.setDate(d.getDate() + 1);
   }
   return out;
+}
+function shiftWeek(mondayStr, deltaWeeks) {
+  const d = new Date(mondayStr + 'T12:00:00');
+  d.setDate(d.getDate() + deltaWeeks * 7);
+  return dateStr(d);
+}
+function weekLabel(mondayStr) {
+  const dates = weekDatesFrom(mondayStr);
+  const start = new Date(dates[0] + 'T12:00:00'), end = new Date(dates[6] + 'T12:00:00');
+  const fmt = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `Week of ${fmt(start)} – ${fmt(end)}`;
+}
+// Average only over program days within [PROGRAM_START, today] that fall in this week —
+// keeps the first partial week (program started mid-week) and future weeks from skewing.
+function activeDatesInWeek(mondayStr) {
+  const today = todayStr();
+  return weekDatesFrom(mondayStr).filter(d => d >= PROGRAM_START && d <= today);
+}
+function weeklyAverage(user, mondayStr) {
+  const active = activeDatesInWeek(mondayStr);
+  if (!active.length) return null;
+  const sum = active.reduce((s, d) => {
+    const e = findEntry(user, d);
+    return s + (e && e.submittedAt ? scoreOf(e).pct : 0);
+  }, 0);
+  return Math.round(sum / active.length);
 }
 
 /* ===================== entry helpers ===================== */
@@ -184,11 +226,28 @@ setInterval(tickClock, 1000);
 
 /* ===================== TODAY view ===================== */
 
+function renderDatePicker() {
+  const wrap = document.getElementById('datePicker');
+  const options = [todayStr(), ...BACKFILL_DATES.filter(d => d !== todayStr())];
+  if (options.length < 2) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  wrap.innerHTML = '';
+  options.forEach(d => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'date-pill' + (d === activeEntryDate ? ' active' : '');
+    btn.textContent = (d === todayStr() ? `Today (${prettyDate(d)})` : `${prettyDate(d)} — catch-up`);
+    btn.addEventListener('click', () => { activeEntryDate = d; renderToday(); });
+    wrap.appendChild(btn);
+  });
+}
+
 function renderToday() {
   const user = state.currentUser;
-  const dstr = todayStr();
+  const dstr = activeEntryDate;
   const entry = getOrCreateEntry(user, dstr);
 
+  renderDatePicker();
   document.getElementById('entryDate').textContent = prettyDate(dstr);
   document.getElementById('entryDayType').textContent = entry.dayType.toUpperCase();
 
@@ -198,7 +257,7 @@ function renderToday() {
   document.getElementById('lockNote').textContent = locked
     ? (entry.dayType === 'weekend' ? 'Goal text locked — weekend goals must be written the night before.' : 'Goal text locked for the day.')
     : (pastDeadline ? 'Past the 5:00 AM gate — saving now will mark today DQ.'
-       : isDqExempt(dstr) ? 'Rollout day grace — today is exempt from the 5:00 AM cutoff.'
+       : isDqExempt(dstr) ? 'Catch-up grace — this date is exempt from the 5:00 AM cutoff.'
        : 'Goal titles lock for good the moment you save them.');
 
   const stamp = document.getElementById('lpStamp');
@@ -334,13 +393,13 @@ function refreshScorePreview(entry) {
 function bindStaticFieldListeners() {
   ['lessonLearned', 'tomorrowFocus', 'affirmation'].forEach(id => {
     document.getElementById(id).addEventListener('input', () => {
-      const entry = getOrCreateEntry(state.currentUser, todayStr());
+      const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
       entry[id] = document.getElementById(id).value;
       saveState();
     });
   });
   document.getElementById('bookPage').addEventListener('input', () => {
-    const entry = getOrCreateEntry(state.currentUser, todayStr());
+    const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
     const v = document.getElementById('bookPage').value;
     entry.bookPage = v === '' ? null : Number(v);
     saveState();
@@ -349,7 +408,7 @@ function bindStaticFieldListeners() {
 bindStaticFieldListeners();
 
 document.getElementById('saveGoals').addEventListener('click', () => {
-  const entry = getOrCreateEntry(state.currentUser, todayStr());
+  const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
   if (entry.goalsCreatedAt) return;
   const missing = entry.goals.some(g => !g.title.trim());
   if (missing && !confirm('Some of the 5 goal slots are empty. Save anyway?')) return;
@@ -360,7 +419,7 @@ document.getElementById('saveGoals').addEventListener('click', () => {
 });
 
 document.getElementById('submitDay').addEventListener('click', () => {
-  const entry = getOrCreateEntry(state.currentUser, todayStr());
+  const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
   if (!entry.goalsCreatedAt) {
     entry.goalsCreatedAt = Date.now();
     entry.dq = new Date() > deadlineFor(entry.date);
@@ -409,30 +468,64 @@ function renderLeaderboard() {
 
 function renderWeek() {
   const user = state.currentUser;
-  const dates = lastNDates(7).reverse();
-  let sum = 0, counted = 0;
+  const thisWeekMonday = mondayStrOf(todayStr());
+  const programWeekMonday = mondayStrOf(PROGRAM_START);
+
+  document.getElementById('weekPrev').disabled = currentWeekMonday <= programWeekMonday;
+  document.getElementById('weekNext').disabled = currentWeekMonday >= thisWeekMonday;
+  document.getElementById('weekLabel').textContent = weekLabel(currentWeekMonday);
+
+  const dates = weekDatesFrom(currentWeekMonday);
+  const today = todayStr();
   let html = '<thead><tr><th>Date</th><th>Type</th><th>Score</th><th>Status</th><th>Submitted at</th></tr></thead><tbody>';
   dates.forEach(d => {
+    if (d < PROGRAM_START) { html += `<tr><td>${prettyDate(d)}</td><td>—</td><td>—</td><td>before launch</td><td>—</td></tr>`; return; }
+    if (d > today) { html += `<tr><td>${prettyDate(d)}</td><td>${dayTypeOf(d)}</td><td>—</td><td>upcoming</td><td>—</td></tr>`; return; }
     const e = findEntry(user, d);
     if (e && e.submittedAt) {
       const { pct, status } = scoreOf(e);
-      sum += pct; counted++;
       html += `<tr><td>${prettyDate(d)}</td><td>${e.dayType}</td><td>${pct}%</td><td>${statusPill(status)}</td><td>${prettyTime(e.submittedAt)}</td></tr>`;
     } else {
-      html += `<tr><td>${prettyDate(d)}</td><td>${dayTypeOf(d)}</td><td>—</td><td>${d === todayStr() ? 'pending' : 'no log'}</td><td>—</td></tr>`;
+      html += `<tr><td>${prettyDate(d)}</td><td>${dayTypeOf(d)}</td><td>—</td><td>${d === today ? 'pending' : 'no log'}</td><td>—</td></tr>`;
     }
   });
   html += '</tbody>';
   document.getElementById('weekTable').innerHTML = html;
 
-  const avg = counted ? Math.round(sum / 7) : 0; // days with no log count as 0 toward the week
+  const activeDays = activeDatesInWeek(currentWeekMonday);
+  const loggedCount = activeDays.filter(d => { const e = findEntry(user, d); return e && e.submittedAt; }).length;
+  const avg = weeklyAverage(user, currentWeekMonday) ?? 0;
   const summary = document.getElementById('weekSummary');
   summary.innerHTML = `
-    <div class="week-stat"><div class="week-stat-label">7-day average</div><div class="week-stat-val ${avg >= WEEKLY_TARGET ? 'ok' : 'bad'}">${avg}%</div></div>
+    <div class="week-stat"><div class="week-stat-label">Week average</div><div class="week-stat-val ${avg >= WEEKLY_TARGET ? 'ok' : 'bad'}">${avg}%</div></div>
     <div class="week-stat"><div class="week-stat-label">Target</div><div class="week-stat-val">${WEEKLY_TARGET}%</div></div>
-    <div class="week-stat"><div class="week-stat-label">Logged days</div><div class="week-stat-val">${counted}/7</div></div>
+    <div class="week-stat"><div class="week-stat-label">Logged days</div><div class="week-stat-val">${loggedCount}/${activeDays.length}</div></div>
   `;
+
+  // all-weeks overview, program start through current week, newest first
+  let weeksHtml = '<thead><tr><th>Week</th><th>Average</th><th>Target</th></tr></thead><tbody>';
+  let m = thisWeekMonday;
+  const weekRows = [];
+  while (m >= programWeekMonday) {
+    const wAvg = weeklyAverage(user, m);
+    weekRows.push({ m, wAvg });
+    m = shiftWeek(m, -1);
+  }
+  weekRows.forEach(({ m, wAvg }) => {
+    weeksHtml += `<tr class="${m === currentWeekMonday ? 'top-row' : ''}">
+      <td><button class="week-nav-btn" type="button" data-jump="${m}">${weekLabel(m)}</button></td>
+      <td>${wAvg == null ? '—' : wAvg + '%'}</td>
+      <td>${wAvg == null ? '—' : (wAvg >= WEEKLY_TARGET ? 'on track' : 'below')}</td>
+    </tr>`;
+  });
+  weeksHtml += '</tbody>';
+  document.getElementById('weeksOverviewTable').innerHTML = weeksHtml;
+  document.querySelectorAll('[data-jump]').forEach(btn => {
+    btn.addEventListener('click', () => { currentWeekMonday = btn.dataset.jump; renderWeek(); });
+  });
 }
+document.getElementById('weekPrev').addEventListener('click', () => { currentWeekMonday = shiftWeek(currentWeekMonday, -1); renderWeek(); });
+document.getElementById('weekNext').addEventListener('click', () => { currentWeekMonday = shiftWeek(currentWeekMonday, 1); renderWeek(); });
 
 /* ===================== BOOK view ===================== */
 
@@ -578,14 +671,12 @@ function renderAdmin() {
   });
   document.getElementById('adminPairs').innerHTML = pairsHtml;
 
-  // weekly rollup
-  const dates7 = lastNDates(7);
+  // weekly rollup — current calendar week (Mon–Sun), same as My Week
+  const thisWeekMonday = mondayStrOf(todayStr());
   let weeklyHtml = '';
   Object.keys(ROSTER).forEach(key => {
-    let sum = 0;
-    dates7.forEach(d => { const e = findEntry(key, d); if (e && e.submittedAt) sum += scoreOf(e).pct; });
-    const avg = Math.round(sum / 7);
-    weeklyHtml += `<div class="pair-summary"><span>${ROSTER[key].name}</span><span class="${avg >= WEEKLY_TARGET ? '' : ''}">${avg}%</span></div>`;
+    const avg = weeklyAverage(key, thisWeekMonday) ?? 0;
+    weeklyHtml += `<div class="pair-summary"><span>${ROSTER[key].name}</span><span>${avg}%</span></div>`;
   });
   document.getElementById('adminWeekly').innerHTML = weeklyHtml;
 
