@@ -44,6 +44,9 @@ function deadlineFor(dstr) { return new Date(dstr + `T0${DEADLINE_HOUR}:00:00`);
 function prettyDate(dstr) {
   return new Date(dstr + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
+function prettyTime(ts) {
+  return ts ? new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '—';
+}
 function lastNDates(n) {
   const out = [];
   for (let i = 0; i < n; i++) {
@@ -376,18 +379,19 @@ function renderLeaderboard() {
   const dstr = todayStr();
   const rows = Object.keys(ROSTER).map(key => {
     const e = findEntry(key, dstr);
-    if (!e || !e.submittedAt) return { key, name: ROSTER[key].name, pct: -1, status: null, submitted: false };
+    if (!e || !e.submittedAt) return { key, name: ROSTER[key].name, pct: -1, status: null, submitted: false, submittedAt: null };
     const { pct, status } = scoreOf(e);
-    return { key, name: ROSTER[key].name, pct, status, submitted: true };
+    return { key, name: ROSTER[key].name, pct, status, submitted: true, submittedAt: e.submittedAt };
   }).sort((a, b) => b.pct - a.pct);
 
   const topPct = rows.reduce((m, r) => (r.submitted && r.status !== 'dq') ? Math.max(m, r.pct) : m, -1);
-  let html = '<thead><tr><th>Name</th><th>Score</th><th>Status</th></tr></thead><tbody>';
+  let html = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Submitted at</th></tr></thead><tbody>';
   rows.forEach(r => {
     html += `<tr class="${r.submitted && r.status !== 'dq' && r.pct === topPct && topPct > 0 ? 'top-row' : ''}">
       <td>${r.name}</td>
       <td>${r.submitted ? r.pct + '%' : '—'}</td>
       <td>${r.submitted ? statusPill(r.status) : 'not logged'}</td>
+      <td>${prettyTime(r.submittedAt)}</td>
     </tr>`;
   });
   html += '</tbody>';
@@ -400,15 +404,15 @@ function renderWeek() {
   const user = state.currentUser;
   const dates = lastNDates(7).reverse();
   let sum = 0, counted = 0;
-  let html = '<thead><tr><th>Date</th><th>Type</th><th>Score</th><th>Status</th></tr></thead><tbody>';
+  let html = '<thead><tr><th>Date</th><th>Type</th><th>Score</th><th>Status</th><th>Submitted at</th></tr></thead><tbody>';
   dates.forEach(d => {
     const e = findEntry(user, d);
     if (e && e.submittedAt) {
       const { pct, status } = scoreOf(e);
       sum += pct; counted++;
-      html += `<tr><td>${prettyDate(d)}</td><td>${e.dayType}</td><td>${pct}%</td><td>${statusPill(status)}</td></tr>`;
+      html += `<tr><td>${prettyDate(d)}</td><td>${e.dayType}</td><td>${pct}%</td><td>${statusPill(status)}</td><td>${prettyTime(e.submittedAt)}</td></tr>`;
     } else {
-      html += `<tr><td>${prettyDate(d)}</td><td>${dayTypeOf(d)}</td><td>—</td><td>${d === todayStr() ? 'pending' : 'no log'}</td></tr>`;
+      html += `<tr><td>${prettyDate(d)}</td><td>${dayTypeOf(d)}</td><td>—</td><td>${d === todayStr() ? 'pending' : 'no log'}</td><td>—</td></tr>`;
     }
   });
   html += '</tbody>';
@@ -579,14 +583,14 @@ function renderAdmin() {
   document.getElementById('adminWeekly').innerHTML = weeklyHtml;
 
   // daily leaderboard (all statuses incl not logged)
-  let dailyHtml = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Goals saved</th></tr></thead><tbody>';
+  let dailyHtml = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Goals saved at</th><th>Submitted at</th></tr></thead><tbody>';
   Object.keys(ROSTER).forEach(key => {
     const e = findEntry(key, dstr);
     if (!e || !e.submittedAt) {
-      dailyHtml += `<tr><td>${ROSTER[key].name}</td><td>—</td><td>not logged</td><td>${e && e.goalsCreatedAt ? 'yes' : 'no'}</td></tr>`;
+      dailyHtml += `<tr><td>${ROSTER[key].name}</td><td>—</td><td>not logged</td><td>${e && e.goalsCreatedAt ? prettyTime(e.goalsCreatedAt) : '—'}</td><td>—</td></tr>`;
     } else {
       const { pct, status } = scoreOf(e);
-      dailyHtml += `<tr><td>${ROSTER[key].name}</td><td>${pct}%</td><td>${statusPill(status)}</td><td>yes</td></tr>`;
+      dailyHtml += `<tr><td>${ROSTER[key].name}</td><td>${pct}%</td><td>${statusPill(status)}</td><td>${prettyTime(e.goalsCreatedAt)}</td><td>${prettyTime(e.submittedAt)}</td></tr>`;
     }
   });
   dailyHtml += '</tbody>';
