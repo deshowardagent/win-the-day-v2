@@ -35,7 +35,13 @@ function loadState() {
   } catch (e) { /* fall through */ }
   return { currentUser: null, entries: [], prizeLog: [] };
 }
-function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+// Pass the entry you just touched so it gets a fresh timestamp — that stamp is what the
+// shared-store merge compares when two people's devices disagree about the same log.
+function saveState(entry) {
+  if (entry && entry.user) entry._ts = Date.now();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (typeof pushSoon === 'function') pushSoon();
+}
 
 let state = loadState();
 let activeEntryDate = todayStr();
@@ -48,6 +54,7 @@ function dateStr(d) {
   return `${y}-${m}-${day}`;
 }
 function todayStr() { return dateStr(new Date()); }
+function tomorrowStr() { const d = new Date(); d.setDate(d.getDate() + 1); return dateStr(d); }
 function dayTypeOf(dstr) {
   const dow = new Date(dstr + 'T12:00:00').getDay();
   return (dow === 0 || dow === 6) ? 'weekend' : 'weekday';
@@ -135,11 +142,15 @@ function scoreOf(entry) {
   return { pct, status };
 }
 function fieldsLocked(entry) {
-  // goal titles/sub-items stay editable until the first "Save goals" — that commit is what
-  // timestamps DQ. After that commit, titles/sub-items lock for good; only completion checkboxes
-  // stay open, matching "lock goal editing after 5:00 AM" for the normal on-time case.
-  return !!entry.goalsCreatedAt;
+  // Goal text locks at that date's 5:00 AM gate, not at the moment you save. That's what makes
+  // planning ahead safe: post tomorrow's five tonight, keep tweaking them until the gate closes,
+  // and after 5:00 AM they're frozen — only the completion checkboxes stay open for the day.
+  if (!entry.goalsCreatedAt) return false;
+  return new Date() > deadlineFor(entry.date);
 }
+// A day is DQ'd if its goals weren't committed before that day's 5:00 AM gate. Writing them
+// early can never DQ you; the stored flag is set at save time against that date's own deadline.
+function isPlanAhead(dstr) { return dstr > todayStr(); }
 
 /* ===================== gate / user switching ===================== */
 
@@ -186,7 +197,7 @@ document.getElementById('switchUser').addEventListener('click', () => {
 /* ===================== tabs / views ===================== */
 
 const RENDERERS = {
-  today: renderToday, leaderboard: renderLeaderboard, week: renderWeek,
+  today: renderToday, tomorrow: renderTomorrow, leaderboard: renderLeaderboard, week: renderWeek,
   book: renderBook, rules: renderRules, admin: renderAdmin,
 };
 function switchView(name) {
@@ -228,15 +239,17 @@ setInterval(tickClock, 1000);
 
 function renderDatePicker() {
   const wrap = document.getElementById('datePicker');
-  const options = [todayStr(), ...BACKFILL_DATES.filter(d => d !== todayStr())];
+  const options = [todayStr(), tomorrowStr(), ...BACKFILL_DATES.filter(d => d !== todayStr())];
   if (options.length < 2) { wrap.hidden = true; return; }
   wrap.hidden = false;
   wrap.innerHTML = '';
   options.forEach(d => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'date-pill' + (d === activeEntryDate ? ' active' : '');
-    btn.textContent = (d === todayStr() ? `Today (${prettyDate(d)})` : `${prettyDate(d)} — catch-up`);
+    btn.className = 'date-pill' + (d === activeEntryDate ? ' active' : '') + (isPlanAhead(d) ? ' ahead' : '');
+    btn.textContent = d === todayStr() ? `Today (${prettyDate(d)})`
+      : isPlanAhead(d) ? `Tomorrow (${prettyDate(d)}) — plan ahead`
+      : `${prettyDate(d)} — catch-up`;
     btn.addEventListener('click', () => { activeEntryDate = d; renderToday(); });
     wrap.appendChild(btn);
   });
@@ -254,11 +267,13 @@ function renderToday() {
   const locked = fieldsLocked(entry);
   const submitted = !!entry.submittedAt;
   const pastDeadline = new Date() > deadlineFor(dstr) && !isDqExempt(dstr);
+  const ahead = isPlanAhead(dstr);
   document.getElementById('lockNote').textContent = locked
     ? (entry.dayType === 'weekend' ? 'Goal text locked — weekend goals must be written the night before.' : 'Goal text locked for the day.')
+    : ahead ? 'Planning ahead — posting these now cannot DQ you. Everyone can see them, and they lock at 5:00 AM.'
     : (pastDeadline ? 'Past the 5:00 AM gate — saving now will mark today DQ.'
        : isDqExempt(dstr) ? 'Catch-up grace — this date is exempt from the 5:00 AM cutoff.'
-       : 'Goal titles lock for good the moment you save them.');
+       : 'Editable until 5:00 AM — after the gate closes the text is frozen.');
 
   const stamp = document.getElementById('lpStamp');
   if (submitted) {
@@ -279,10 +294,14 @@ function renderToday() {
   refreshScorePreview(entry);
 
   document.getElementById('saveGoals').disabled = locked || submitted;
-  document.getElementById('submitDay').disabled = submitted;
-  document.getElementById('submitDay').textContent = submitted ? 'Submitted' : "Submit today's log";
+  document.getElementById('saveGoals').textContent = ahead ? "Post tomorrow's goals" : 'Save goals';
+  // A day can only be submitted once it has actually happened — planning ahead posts goals, nothing else.
+  document.getElementById('submitDay').disabled = submitted || ahead;
+  document.getElementById('submitDay').textContent = submitted ? 'Submitted' : ahead ? 'Submit opens tomorrow' : "Submit today's log";
   document.getElementById('lpNote').textContent = submitted
     ? 'Logged. Come back tomorrow — before 5:00 AM.'
+    : ahead
+    ? "Posted goals show on the Tomorrow tab for everyone. Come back after midnight to tick them off — you're already through the gate."
     : '';
 }
 
@@ -305,7 +324,7 @@ function renderGoals(entry, locked, submitted) {
     titleInput.value = g.title;
     titleInput.placeholder = 'Needle-mover goal…';
     titleInput.disabled = locked || submitted;
-    titleInput.addEventListener('input', () => { g.title = titleInput.value; saveState(); });
+    titleInput.addEventListener('input', () => { g.title = titleInput.value; saveState(entry); });
     top.appendChild(titleInput);
 
     const cat = document.createElement('select');
@@ -317,7 +336,7 @@ function renderGoals(entry, locked, submitted) {
       if (c === g.category) opt.selected = true;
       cat.appendChild(opt);
     });
-    cat.addEventListener('change', () => { g.category = cat.value; saveState(); });
+    cat.addEventListener('change', () => { g.category = cat.value; saveState(entry); });
     top.appendChild(cat);
 
     if (!g.subItems.length) {
@@ -326,7 +345,7 @@ function renderGoals(entry, locked, submitted) {
       done.checked = !!g.completedManual;
       done.disabled = submitted;
       done.addEventListener('change', () => {
-        g.completedManual = done.checked; saveState(); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+        g.completedManual = done.checked; saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
       });
       top.appendChild(done);
     }
@@ -341,20 +360,20 @@ function renderGoals(entry, locked, submitted) {
         const cb = document.createElement('input');
         cb.type = 'checkbox'; cb.checked = si.done; cb.disabled = submitted;
         cb.addEventListener('change', () => {
-          si.done = cb.checked; saveState(); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+          si.done = cb.checked; saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
         });
         row.appendChild(cb);
         const txt = document.createElement('input');
         txt.className = 'subitem-text' + (si.done ? ' done' : '');
         txt.value = si.text; txt.placeholder = `sub-item ${si_i + 1}`;
         txt.disabled = locked || submitted;
-        txt.addEventListener('input', () => { si.text = txt.value; saveState(); });
+        txt.addEventListener('input', () => { si.text = txt.value; saveState(entry); });
         row.appendChild(txt);
         if (!locked && !submitted) {
           const rm = document.createElement('button');
           rm.className = 'subitem-remove'; rm.textContent = '×'; rm.type = 'button';
           rm.addEventListener('click', () => {
-            g.subItems.splice(si_i, 1); saveState(); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+            g.subItems.splice(si_i, 1); saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
           });
           row.appendChild(rm);
         }
@@ -371,7 +390,7 @@ function renderGoals(entry, locked, submitted) {
       addBtn.textContent = '+ sub-item';
       addBtn.disabled = g.subItems.length >= 5;
       addBtn.addEventListener('click', () => {
-        g.subItems.push({ text: '', done: false }); saveState(); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
+        g.subItems.push({ text: "", done: false }); saveState(entry); renderGoals(entry, locked, submitted); refreshScorePreview(entry);
       });
       actions.appendChild(addBtn);
       card.appendChild(actions);
@@ -395,26 +414,30 @@ function bindStaticFieldListeners() {
     document.getElementById(id).addEventListener('input', () => {
       const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
       entry[id] = document.getElementById(id).value;
-      saveState();
+      saveState(entry);
     });
   });
   document.getElementById('bookPage').addEventListener('input', () => {
     const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
     const v = document.getElementById('bookPage').value;
-    entry.bookPage = v === '' ? null : Number(v);
-    saveState();
+    entry.bookPage = v === "" ? null : Number(v);
+    saveState(entry);
   });
 }
 bindStaticFieldListeners();
 
 document.getElementById('saveGoals').addEventListener('click', () => {
   const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
-  if (entry.goalsCreatedAt) return;
+  if (fieldsLocked(entry)) return;
   const missing = entry.goals.some(g => !g.title.trim());
   if (missing && !confirm('Some of the 5 goal slots are empty. Save anyway?')) return;
-  entry.goalsCreatedAt = Date.now();
-  entry.dq = new Date() > deadlineFor(entry.date);
-  saveState();
+  // First commit is the one that counts against the gate — re-saving before 5:00 AM
+  // is just editing, and must not re-stamp the time or flip an on-time entry to DQ.
+  if (!entry.goalsCreatedAt) {
+    entry.goalsCreatedAt = Date.now();
+    entry.dq = new Date() > deadlineFor(entry.date);
+  }
+  saveState(entry);
   renderToday();
 });
 
@@ -430,9 +453,61 @@ document.getElementById('submitDay').addEventListener('click', () => {
   const bp = document.getElementById('bookPage').value;
   entry.bookPage = bp === '' ? null : Number(bp);
   entry.submittedAt = Date.now();
-  saveState();
+  saveState(entry);
   renderToday();
 });
+
+/* ===================== TOMORROW view ===================== */
+
+// The shared plan-ahead board: everyone's goals for the next day, visible as soon as they post.
+// Posting early is the safe play — it can't DQ you, and it locks itself at the 5:00 AM gate.
+function renderTomorrow() {
+  const dstr = tomorrowStr();
+  const gate = deadlineFor(dstr);
+  const closed = new Date() > gate;
+  document.getElementById('tomorrowTitle').textContent = `Goals for ${prettyDate(dstr)}`;
+
+  const grid = document.getElementById('tomorrowGrid');
+  grid.innerHTML = '';
+  Object.keys(ROSTER).forEach(key => {
+    const e = findEntry(key, dstr);
+    const posted = !!(e && e.goalsCreatedAt);
+    const titles = posted ? e.goals.map(g => g.title.trim()).filter(Boolean) : [];
+
+    const card = document.createElement('div');
+    card.className = 'tm-card' + (posted ? ' posted' : '') + (key === state.currentUser ? ' mine' : '');
+
+    const head = document.createElement('div');
+    head.className = 'tm-head';
+    const nm = document.createElement('span');
+    nm.className = 'tm-name';
+    nm.textContent = ROSTER[key].name + (key === state.currentUser ? ' (you)' : '');
+    const pill = document.createElement('span');
+    pill.className = 'tm-pill ' + (posted ? (closed ? 'locked' : 'ok') : (closed ? 'miss' : 'wait'));
+    pill.textContent = posted ? (closed ? 'locked in' : 'posted') : (closed ? 'missed the gate' : 'nothing yet');
+    head.append(nm, pill);
+    card.appendChild(head);
+
+    if (titles.length) {
+      const ol = document.createElement('ol');
+      ol.className = 'tm-goals';
+      titles.forEach(t => { const li = document.createElement('li'); li.textContent = t; ol.appendChild(li); });
+      card.appendChild(ol);
+      const foot = document.createElement('div');
+      foot.className = 'tm-foot';
+      foot.textContent = `${titles.length} of 5 written · posted ${prettyTime(e.goalsCreatedAt)}`;
+      card.appendChild(foot);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'tm-empty';
+      empty.textContent = closed
+        ? 'Nothing posted before the gate closed — this day is a DQ.'
+        : 'Has not posted tomorrow’s goals yet.';
+      card.appendChild(empty);
+    }
+    grid.appendChild(card);
+  });
+}
 
 /* ===================== LEADERBOARD view ===================== */
 
@@ -756,3 +831,101 @@ document.getElementById('legacyImportBtn').addEventListener('click', () => {
 tickClock();
 if (state.currentUser && ROSTER[state.currentUser]) enterApp();
 else renderGate();
+
+/* ===================== shared sync =====================
+   One store for all six people. Entries merge per-log on their _ts stamp, so two
+   phones editing different days never clobber each other; the same log edited in two
+   places resolves to whichever was saved last. Nothing here blocks the UI — if the
+   network is down the app keeps working on local storage and pushes when it returns. */
+
+const SYNC_URL = 'https://jsonblob.com/api/jsonBlob/019fd230-e761-72d6-87a5-3f1224e1a82b';
+const SYNC_POLL_MS = 15000;
+const PUSH_DEBOUNCE_MS = 1500;
+
+let syncing = false, needPush = false, pushTimer = null;
+
+function keyOf(e) { return e.id || `${e.user}_${e.date}`; }
+
+function setSyncStatus(ok) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.className = 'sync-status ' + (ok === true ? 'ok' : ok === false ? 'bad' : '');
+  el.textContent = ok === true ? 'shared board · live'
+    : ok === false ? 'offline · saved on this device'
+    : 'connecting…';
+}
+
+function activeViewName() {
+  const t = document.querySelector('.tab.active');
+  return t ? t.dataset.view : 'today';
+}
+// Never redraw the Today form out from under someone who is mid-sentence in it.
+function safeToRerender() {
+  const el = document.activeElement;
+  const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+  return !(typing && activeViewName() === 'today');
+}
+
+function syncNow() {
+  if (syncing) return;
+  syncing = true;
+  fetch(SYNC_URL, { cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('pull failed'); return r.json(); })
+    .then(doc => {
+      const remote = (doc && doc.entries) || {};
+      let changed = false, diverged = false;
+
+      Object.keys(remote).forEach(k => {
+        const rv = remote[k];
+        if (!rv || !rv.user || !rv.date) return;
+        const mine = findEntry(rv.user, rv.date);
+        if (!mine) { state.entries.push(rv); changed = true; }
+        else if ((rv._ts || 0) > (mine._ts || 0)) {
+          Object.keys(rv).forEach(p => { mine[p] = rv[p]; });
+          changed = true;
+        }
+      });
+      state.entries.forEach(e => {
+        const rv = remote[keyOf(e)];
+        if (!rv || (e._ts || 0) > (rv._ts || 0)) diverged = true;
+      });
+
+      if (changed) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        if (safeToRerender()) { const r = RENDERERS[activeViewName()]; r && r(); }
+      }
+
+      if (diverged || needPush) {
+        const out = { entries: {} };
+        Object.keys(remote).forEach(k => { out.entries[k] = remote[k]; });
+        state.entries.forEach(e => {
+          const k = keyOf(e), rv = out.entries[k];
+          if (!rv || (e._ts || 0) >= (rv._ts || 0)) out.entries[k] = e;
+        });
+        return fetch(SYNC_URL, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(out),
+        }).then(r => {
+          if (!r.ok) throw new Error('push failed');
+          needPush = false;
+          setSyncStatus(true);
+        });
+      }
+      setSyncStatus(true);
+    })
+    .catch(() => setSyncStatus(false))
+    .finally(() => { syncing = false; });
+}
+
+// Called from saveState() on every edit — debounced so typing a goal title doesn't
+// fire a request per keystroke.
+function pushSoon() {
+  needPush = true;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(syncNow, PUSH_DEBOUNCE_MS);
+}
+
+setSyncStatus(null);
+syncNow();
+setInterval(syncNow, SYNC_POLL_MS);

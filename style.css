@@ -279,3 +279,49 @@ input,textarea{ font-family: inherit; }
 .pair-summary:last-child{ border-bottom:none; }
 .prize-form{ display:grid; grid-template-columns: 1.3fr 1fr 1fr 1.5fr auto; gap:.5rem; margin-bottom:.9rem; }
 @media (max-width:760px){ .prize-form{ grid-template-columns:1fr 1fr; } }
+
+/* ---------- sync status ---------- */
+.sync-status{
+  font-family: var(--f-mono); font-size:.6rem; letter-spacing:.08em; text-transform:uppercase;
+  color: var(--on-ink-mut); display:inline-flex; align-items:center; gap:.4rem; margin-top:.15rem;
+}
+.sync-status::before{
+  content:''; width:6px; height:6px; border-radius:50%; background: var(--on-ink-mut); flex:none;
+}
+.sync-status.ok{ color:#7BD8A0; }
+.sync-status.ok::before{ background:#7BD8A0; box-shadow:0 0 6px rgba(123,216,160,.8); }
+.sync-status.bad{ color:#F19A8E; }
+.sync-status.bad::before{ background:#F19A8E; }
+
+/* ---------- plan-ahead ---------- */
+.date-pill.ahead{ border-style:dashed; }
+.date-pill.ahead.active{ border-style:solid; }
+
+/* ---------- tomorrow board ---------- */
+.tomorrow-grid{
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(260px,1fr)); gap:1rem;
+}
+.tm-card{
+  background: var(--ink-2); border:1px solid var(--ink-3); border-radius:10px; padding:1rem 1.1rem;
+  display:flex; flex-direction:column; gap:.7rem;
+}
+.tm-card.posted{ border-color: rgba(47,125,79,.5); }
+.tm-card.mine{ box-shadow: inset 3px 0 0 var(--ember); }
+.tm-head{ display:flex; align-items:center; justify-content:space-between; gap:.6rem; }
+.tm-name{ font-family: var(--f-display); font-weight:800; font-size:1.15rem; letter-spacing:.02em; }
+.tm-pill{
+  font-family: var(--f-mono); font-size:.6rem; letter-spacing:.06em; text-transform:uppercase;
+  padding:.2rem .55rem; border-radius:20px; white-space:nowrap;
+}
+.tm-pill.ok{ background: rgba(47,125,79,.18); color:#7BD8A0; }
+.tm-pill.locked{ background: rgba(255,106,61,.16); color: var(--ember); }
+.tm-pill.wait{ background: rgba(138,147,160,.14); color: var(--on-ink-mut); }
+.tm-pill.miss{ background: rgba(179,38,30,.3); color:#FF8A7A; font-weight:700; }
+.tm-goals{
+  margin:0; padding-left:1.15rem; display:flex; flex-direction:column; gap:.35rem;
+  font-family: var(--f-serif); font-size:.9rem; line-height:1.4; color: var(--on-ink);
+}
+.tm-goals li::marker{ color: var(--on-ink-mut); font-family: var(--f-mono); font-size:.75rem; }
+.tm-foot, .tm-empty{
+  font-family: var(--f-mono); font-size:.65rem; color: var(--on-ink-mut); margin:0; line-height:1.5;
+}

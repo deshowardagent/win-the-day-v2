@@ -28,6 +28,7 @@
     <div class="brand">
       <span class="brand-mark">WIN&nbsp;THE&nbsp;DAY</span>
       <span class="brand-sub">accountability ledger</span>
+      <span class="sync-status" id="syncStatus">connecting…</span>
     </div>
 
     <div class="gate-clock" id="gateClock" title="Time until the goal-lock deadline">
@@ -44,6 +45,7 @@
 
   <nav class="tabs" id="tabs">
     <button class="tab active" data-view="today">Today</button>
+    <button class="tab" data-view="tomorrow">Tomorrow</button>
     <button class="tab" data-view="leaderboard">Leaderboard</button>
     <button class="tab" data-view="week">My Week</button>
     <button class="tab" data-view="book">Book</button>
@@ -110,10 +112,16 @@
       </div>
     </section>
 
+    <!-- TOMORROW -->
+    <section class="view hidden" id="view-tomorrow">
+      <h2 class="view-title" id="tomorrowTitle">Tomorrow's goals</h2>
+      <p class="local-note">Post tomorrow's five ahead of time — writing early never DQs you. Everyone sees them as they go up, and at 5:00 AM they lock. Miss the gate with nothing posted and that day is a DQ.</p>
+      <div class="tomorrow-grid" id="tomorrowGrid"></div>
+    </section>
+
     <!-- LEADERBOARD -->
     <section class="view hidden" id="view-leaderboard">
       <h2 class="view-title">Today's leaderboard</h2>
-      <p class="local-note">Local mode — this device only shows entries submitted here. Ask others to read their score out at check-in until the shared board is live.</p>
       <div class="table-wrap"><table class="ledger-table" id="leaderboardTable"></table></div>
     </section>
 
