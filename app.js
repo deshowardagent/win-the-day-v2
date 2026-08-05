@@ -13,6 +13,11 @@ const CATEGORIES = ['', 'health', 'wealth', 'relationships', 'spiritual'];
 const BOOK_BENCHMARK = 60;
 const WEEKLY_TARGET = 70;
 const DEADLINE_HOUR = 5; // 5:00 AM
+// Rollout went live the evening of Aug 4, after that day's 5:00 AM cutoff had already
+// passed — nobody could have logged on time, so that one date is exempt from auto-DQ.
+const DQ_EXEMPT_DATES = ['2026-08-04'];
+function isDqExempt(dstr) { return DQ_EXEMPT_DATES.includes(dstr); }
+function effectiveDq(entry) { return entry.dq && !isDqExempt(entry.date); }
 
 /* ===================== state ===================== */
 
@@ -81,7 +86,7 @@ function goalComplete(g) {
 }
 function completedCount(entry) { return entry.goals.filter(goalComplete).length; }
 function scoreOf(entry) {
-  if (entry.dq) return { pct: 0, status: 'dq' };
+  if (effectiveDq(entry)) return { pct: 0, status: 'dq' };
   const c = completedCount(entry);
   const pct = c * 20;
   const status = c >= 3 ? 'pass' : 'fail';
@@ -189,10 +194,12 @@ function renderToday() {
 
   const locked = fieldsLocked(entry);
   const submitted = !!entry.submittedAt;
-  const pastDeadline = new Date() > deadlineFor(dstr);
+  const pastDeadline = new Date() > deadlineFor(dstr) && !isDqExempt(dstr);
   document.getElementById('lockNote').textContent = locked
     ? (entry.dayType === 'weekend' ? 'Goal text locked — weekend goals must be written the night before.' : 'Goal text locked for the day.')
-    : (pastDeadline ? 'Past the 5:00 AM gate — saving now will mark today DQ.' : 'Goal titles lock for good the moment you save them.');
+    : (pastDeadline ? 'Past the 5:00 AM gate — saving now will mark today DQ.'
+       : isDqExempt(dstr) ? 'Rollout day grace — today is exempt from the 5:00 AM cutoff.'
+       : 'Goal titles lock for good the moment you save them.');
 
   const stamp = document.getElementById('lpStamp');
   if (submitted) {
@@ -564,8 +571,8 @@ function renderAdmin() {
     const ca = ea && ea.submittedAt ? completedCount(ea) : 0;
     const cb = eb && eb.submittedAt ? completedCount(eb) : 0;
     const teamPct = Math.round(((ca + cb) / 10) * 100);
-    const aOk = ea && ea.submittedAt && !ea.dq && ca >= 3;
-    const bOk = eb && eb.submittedAt && !eb.dq && cb >= 3;
+    const aOk = ea && ea.submittedAt && !effectiveDq(ea) && ca >= 3;
+    const bOk = eb && eb.submittedAt && !effectiveDq(eb) && cb >= 3;
     const win = teamPct >= 80 && aOk && bOk;
     pairsHtml += `<div class="pair-summary"><span>${ROSTER[a].name} + ${ROSTER[b].name}</span><span>${teamPct}% — ${win ? 'WIN THE DAY' : 'not yet'}</span></div>`;
   });
@@ -597,7 +604,7 @@ function renderAdmin() {
   document.getElementById('adminDaily').innerHTML = dailyHtml;
 
   // DQ log
-  const dqEntries = state.entries.filter(e => e.dq).sort((a, b) => b.date.localeCompare(a.date));
+  const dqEntries = state.entries.filter(e => effectiveDq(e)).sort((a, b) => b.date.localeCompare(a.date));
   let dqHtml = '<thead><tr><th>Name</th><th>Date</th><th>Goals saved at</th></tr></thead><tbody>';
   dqEntries.forEach(e => {
     dqHtml += `<tr><td>${ROSTER[e.user].name}</td><td>${prettyDate(e.date)}</td><td>${e.goalsCreatedAt ? new Date(e.goalsCreatedAt).toLocaleTimeString() : '—'}</td></tr>`;
