@@ -34,21 +34,24 @@ create policy "board update" on public.entries for update to anon using (true) w
 
 ## 3. Get the two values
 
-Left sidebar → **Project Settings** → **API**. Copy:
+Easiest: the green **Connect** button at the top of the dashboard — it shows both at once.
+Otherwise **Settings → API Keys**. Copy:
 
 - **Project URL** — looks like `https://abcdefghijkl.supabase.co`
-- **anon / public** key — the long one labelled `anon`, *not* `service_role`
+- **Publishable key** — starts with `sb_publishable_…` (on an older project this is the key
+  labelled **anon** instead; either works)
 
-The `anon` key is designed to be public and ships in client-side code. **Never** paste the
-`service_role` key here — that one bypasses every policy above.
+That key is designed to be public and ships in client-side code. **Never** paste the
+**secret** key (`sb_secret_…`, formerly `service_role`) here — that one bypasses every policy
+above and would let anyone with the link do anything to the database.
 
 ## 4. Paste them in
 
 Top of the sync section in `app.js`:
 
 ```js
-const SUPABASE_URL = '';       // ← Project URL, no trailing slash
-const SUPABASE_ANON_KEY = '';  // ← anon / public key
+const SUPABASE_URL = '';         // ← Project URL, no trailing slash
+const SUPABASE_PUBLIC_KEY = '';  // ← publishable (or anon) key
 ```
 
 Commit and push; GitHub Pages rebuilds in ~40 seconds. The red banner disappears and the

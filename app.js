@@ -965,9 +965,11 @@ if (state.currentUser && ROSTER[state.currentUser]) enterApp();
    create new ones (404 on the blob, 403 on create). It took a week to notice, because the
    only signal was a small grey word in the header — hence the banner below. */
 
-// ── setup: paste these from Supabase → Project Settings → API ────────────────
-const SUPABASE_URL = '';       // e.g. 'https://abcdefghijkl.supabase.co'  (no trailing slash)
-const SUPABASE_ANON_KEY = '';  // the "anon / public" key — safe to ship in client code
+// ── setup: paste these from the Supabase dashboard → Connect ─────────────────
+const SUPABASE_URL = '';         // e.g. 'https://abcdefghijkl.supabase.co'  (no trailing slash)
+const SUPABASE_PUBLIC_KEY = '';  // the publishable key (sb_publishable_…), or a legacy anon key.
+                                 // Both are designed to ship in client code and both resolve to
+                                 // the `anon` role, which is what the RLS policies below grant.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SYNC_TABLE = 'entries';
@@ -975,12 +977,12 @@ const SYNC_POLL_MS = 15000;
 const PUSH_DEBOUNCE_MS = 1500;
 const SYNC_ALERT_AFTER_MS = 10 * 60 * 1000; // start shouting after 10 minutes of failure
 
-function syncConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON_KEY); }
+function syncConfigured() { return !!(SUPABASE_URL && SUPABASE_PUBLIC_KEY); }
 function sbUrl(path) { return `${SUPABASE_URL}/rest/v1/${path}`; }
 function sbHeaders(extra) {
   return Object.assign({
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    apikey: SUPABASE_PUBLIC_KEY,
+    Authorization: `Bearer ${SUPABASE_PUBLIC_KEY}`,
     'Content-Type': 'application/json',
   }, extra || {});
 }
