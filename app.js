@@ -17,7 +17,15 @@ const DEADLINE_HOUR = 5; // 5:00 AM
 // passed — nobody could have logged on time, so that one date is exempt from auto-DQ.
 const DQ_EXEMPT_DATES = ['2026-08-04'];
 function isDqExempt(dstr) { return DQ_EXEMPT_DATES.includes(dstr); }
-function effectiveDq(entry) { return entry.dq && !isDqExempt(entry.date); }
+// DQ is derived from when the goals were first written — never read back off a stored flag.
+// The old code decided it once, at whichever moment a button happened to be pressed, and a
+// wrong answer then stuck forever. Deriving it means the whole history re-scores itself
+// correctly the moment the deadline rule changes.
+function effectiveDq(entry) {
+  if (!entry || isDqExempt(entry.date)) return false;
+  if (!entry.goalsCreatedAt) return false; // nothing written at all — unlogged, scores 0, not a DQ
+  return entry.goalsCreatedAt > deadlineFor(entry.date).getTime();
+}
 
 // Day 1 of the program. Weeks are Monday–Sunday; nothing before this date counts
 // toward any weekly average. Aug 4 is also open for one-time catch-up logging today.
@@ -27,6 +35,7 @@ const BACKFILL_DATES = ['2026-08-04'];
 /* ===================== state ===================== */
 
 const STORAGE_KEY = 'wtd_v2_state';
+const BACKUP_KEY = 'wtd_v2_backup';
 
 // Hard reset — 2026-08-05 10:01 EDT. Everything written before this instant is dropped on
 // load and is never merged or pushed again. Without it, wiping the shared store achieves
@@ -51,9 +60,28 @@ function loadState() {
 // Pass the entry you just touched so it gets a fresh timestamp — that stamp is what the
 // shared-store merge compares when two people's devices disagree about the same log.
 function saveState(entry) {
-  if (entry && entry.user) entry._ts = Date.now();
+  if (entry && entry.user) {
+    entry._ts = Date.now();
+    // Writing your goals IS posting them. Everything on this form autosaves as you type, so
+    // people wrote their five on time, never pressed a button, and got stamped — and DQ'd —
+    // whenever they next came back. The first keystroke of a real goal is the commit.
+    if (!entry.goalsCreatedAt && (entry.goals || []).some(g => (g.title || '').trim())) {
+      entry.goalsCreatedAt = Date.now();
+    }
+    entry.dq = effectiveDq(entry);
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  backupState();
   if (typeof pushSoon === 'function') pushSoon();
+}
+
+// A second, never-merged copy of this device's logs. The shared store has now vanished twice;
+// if it goes again, or a merge ever goes wrong, this is what "Export my data" reads from.
+function backupState() {
+  try {
+    const mine = (state.entries || []).filter(e => e.user && (e.goalsCreatedAt || e.submittedAt));
+    if (mine.length) localStorage.setItem(BACKUP_KEY, JSON.stringify({ savedAt: Date.now(), entries: mine }));
+  } catch (e) { /* quota or private mode — the main store is still there */ }
 }
 
 let state = loadState();
@@ -72,7 +100,20 @@ function dayTypeOf(dstr) {
   const dow = new Date(dstr + 'T12:00:00').getDay();
   return (dow === 0 || dow === 6) ? 'weekend' : 'weekday';
 }
-function deadlineFor(dstr) { return new Date(dstr + `T0${DEADLINE_HOUR}:00:00`); }
+// The gate for day D closes at 5:00 AM the *following* morning: you get all of D, plus the
+// small hours after it, to write and submit that day's log. Logging your own day while you
+// are living it can never DQ you.
+function deadlineFor(dstr) {
+  const d = new Date(dstr + 'T12:00:00'); // midday anchor keeps the +1 day safe across DST
+  d.setDate(d.getDate() + 1);
+  return new Date(dateStr(d) + `T0${DEADLINE_HOUR}:00:00`);
+}
+// The date whose gate the next 5:00 AM closes: before 5 AM that's yesterday, after it, today.
+function dateOnTheClock() {
+  const d = new Date();
+  if (d.getHours() < DEADLINE_HOUR) d.setDate(d.getDate() - 1);
+  return dateStr(d);
+}
 function prettyDate(dstr) {
   return new Date(dstr + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
@@ -205,9 +246,15 @@ function enterApp() {
   switchView('today');
 }
 
+// The overlay is populated by renderGate(), which used to run only at boot and only when no
+// name was saved yet — so on any device that already had a name, "switch" opened an overlay
+// with no buttons in it and whoever was picked first was stuck there permanently.
 document.getElementById('switchUser').addEventListener('click', () => {
+  state.currentUser = null;
+  saveState();
   appEl.classList.add('hidden');
   gateEl.classList.remove('hidden');
+  renderGate();
 });
 
 /* ===================== tabs / views ===================== */
@@ -230,22 +277,19 @@ document.getElementById('tabs').addEventListener('click', e => {
 
 function tickClock() {
   const now = new Date();
-  const dstr = todayStr();
+  // The next 5:00 AM always closes exactly one day's gate — today's if we're past this
+  // morning's, yesterday's if we're still in the small hours. Naming the day it belongs to is
+  // the whole point: the old clock just said "GATE CLOSED" and then counted down 22 hours,
+  // which read as "you still have time" while the code was DQ'ing anyone who used it.
+  const dstr = dateOnTheClock();
   const dl = deadlineFor(dstr);
   const el = document.getElementById('gateClock');
   const label = document.getElementById('gcLabel');
   const time = document.getElementById('gcTime');
-  let diff = dl - now;
+  const diff = Math.max(0, dl - now);
   el.classList.remove('warn', 'closed');
-  if (diff > 0) {
-    label.textContent = 'GATE CLOSES IN';
-    if (diff < 60 * 60 * 1000) el.classList.add('warn');
-  } else {
-    label.textContent = 'GATE CLOSED — LOCKS AT 5:00 TOMORROW';
-    el.classList.add('closed');
-    const tomorrow = new Date(dl); tomorrow.setDate(tomorrow.getDate() + 1);
-    diff = tomorrow - now;
-  }
+  label.textContent = dstr === todayStr() ? "TODAY'S LOG CLOSES IN" : "YESTERDAY'S LOG CLOSES IN";
+  if (diff < 60 * 60 * 1000) el.classList.add('warn');
   const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000), s = Math.floor((diff % 60000) / 1000);
   time.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
@@ -285,11 +329,11 @@ function renderToday() {
   const pastDeadline = new Date() > deadlineFor(dstr) && !isDqExempt(dstr);
   const ahead = isPlanAhead(dstr);
   document.getElementById('lockNote').textContent = locked
-    ? (entry.dayType === 'weekend' ? 'Goal text locked — weekend goals must be written the night before.' : 'Goal text locked for the day.')
-    : ahead ? 'Planning ahead — posting these now cannot DQ you. Everyone can see them, and they lock at 5:00 AM.'
-    : (pastDeadline ? 'Past the 5:00 AM gate — saving now will mark today DQ.'
+    ? 'Locked — the 5:00 AM gate has closed on this day.'
+    : ahead ? 'Planning ahead — posting these now cannot DQ you. Everyone can see them as you write.'
+    : (pastDeadline ? 'Past this day’s 5:00 AM gate — writing goals now marks it DQ.'
        : isDqExempt(dstr) ? 'Catch-up grace — this date is exempt from the 5:00 AM cutoff.'
-       : 'Editable until 5:00 AM — after the gate closes the text is frozen.');
+       : 'Open until 5:00 AM tomorrow. Your goals save the moment you type them — you don’t have to press anything to be on time.');
 
   const stamp = document.getElementById('lpStamp');
   if (submitted) {
@@ -454,20 +498,16 @@ document.getElementById('saveGoals').addEventListener('click', () => {
   if (missing && !confirm('Some of the 5 goal slots are empty. Save anyway?')) return;
   // First commit is the one that counts against the gate — re-saving before 5:00 AM
   // is just editing, and must not re-stamp the time or flip an on-time entry to DQ.
-  if (!entry.goalsCreatedAt) {
-    entry.goalsCreatedAt = Date.now();
-    entry.dq = new Date() > deadlineFor(entry.date);
-  }
+  // Normally already stamped by the first autosave; this only catches committing an empty form.
+  if (!entry.goalsCreatedAt) entry.goalsCreatedAt = Date.now();
   saveState(entry);
   renderToday();
 });
 
 document.getElementById('submitDay').addEventListener('click', () => {
   const entry = getOrCreateEntry(state.currentUser, activeEntryDate);
-  if (!entry.goalsCreatedAt) {
-    entry.goalsCreatedAt = Date.now();
-    entry.dq = new Date() > deadlineFor(entry.date);
-  }
+  // Normally already stamped by the first autosave; this only catches committing an empty form.
+  if (!entry.goalsCreatedAt) entry.goalsCreatedAt = Date.now();
   entry.lessonLearned = document.getElementById('lessonLearned').value;
   entry.tomorrowFocus = document.getElementById('tomorrowFocus').value;
   entry.affirmation = document.getElementById('affirmation').value;
@@ -504,7 +544,7 @@ function renderTomorrowEditor(dstr) {
   note.textContent = locked
     ? 'Locked — the 5:00 AM gate has closed on this day.'
     : entry.goalsCreatedAt
-    ? `Posted ${prettyTime(entry.goalsCreatedAt)} · still editable until 5:00 AM`
+    ? `Posted ${prettyTime(entry.goalsCreatedAt)} · still editable`
     : 'Nothing posted yet. Writing these now cannot DQ you.';
   head.append(h, note);
   box.appendChild(head);
@@ -525,11 +565,8 @@ function renderTomorrowEditor(dstr) {
     if (fieldsLocked(entry)) return;
     if (entry.goals.some(g => !g.title.trim()) &&
         !confirm('Some of the 5 goal slots are empty. Post anyway?')) return;
-    // First commit is what counts against the gate; later edits before 5:00 AM don't re-stamp it.
-    if (!entry.goalsCreatedAt) {
-      entry.goalsCreatedAt = Date.now();
-      entry.dq = new Date() > deadlineFor(entry.date);
-    }
+    // First write is what counts against the gate; later edits never re-stamp it.
+    if (!entry.goalsCreatedAt) entry.goalsCreatedAt = Date.now();
     saveState(entry);
     renderTomorrow();
   });
@@ -600,18 +637,22 @@ function renderLeaderboard() {
   const dstr = todayStr();
   const rows = Object.keys(ROSTER).map(key => {
     const e = findEntry(key, dstr);
-    if (!e || !e.submittedAt) return { key, name: ROSTER[key].name, pct: -1, status: null, submitted: false, submittedAt: null };
+    const base = { key, name: ROSTER[key].name, postedAt: e ? e.goalsCreatedAt : null };
+    if (!e || !e.submittedAt) return { ...base, pct: -1, status: null, submitted: false, submittedAt: null };
     const { pct, status } = scoreOf(e);
-    return { key, name: ROSTER[key].name, pct, status, submitted: true, submittedAt: e.submittedAt };
+    return { ...base, pct, status, submitted: true, submittedAt: e.submittedAt };
   }).sort((a, b) => b.pct - a.pct);
 
   const topPct = rows.reduce((m, r) => (r.submitted && r.status !== 'dq') ? Math.max(m, r.pct) : m, -1);
-  let html = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Submitted at</th></tr></thead><tbody>';
+  // "Goals posted" is the honesty column: the gate no longer punishes a late write, so the
+  // time it went up is what shows whether someone planned the day or backfilled it.
+  let html = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Goals posted</th><th>Submitted at</th></tr></thead><tbody>';
   rows.forEach(r => {
     html += `<tr class="${r.submitted && r.status !== 'dq' && r.pct === topPct && topPct > 0 ? 'top-row' : ''}">
       <td>${r.name}</td>
       <td>${r.submitted ? r.pct + '%' : '—'}</td>
       <td>${r.submitted ? statusPill(r.status) : 'not logged'}</td>
+      <td>${prettyTime(r.postedAt)}</td>
       <td>${prettyTime(r.submittedAt)}</td>
     </tr>`;
   });
@@ -738,7 +779,7 @@ function renderRules() {
     <p><strong>Weekdays:</strong> goals must follow the bundled needle-mover structure above.</p>
     <p><strong>Weekends:</strong> tasks are allowed to count as your 5 items (looser standard).</p>
     <ul>
-      <li>Must be written down the night before — no writing tasks the same day and claiming completion.</li>
+      <li>Write them before you do them — the time your goals went up is on the board, and writing tasks after the fact to claim completion defeats the point.</li>
       <li>Goals still count toward the week; no exceptions for "it's the weekend."</li>
     </ul>
 
@@ -788,8 +829,10 @@ function renderRules() {
 
     <h2>Deadline / disqualification</h2>
     <ul>
-      <li><strong>5:00 AM</strong> submission deadline — every day, including weekends.</li>
-      <li><strong>Auto-DQ if goals are filled out after 5:00 AM.</strong></li>
+      <li>Each day's gate closes at <strong>5:00 AM the following morning</strong> — every day, including weekends.</li>
+      <li>You have all of the day itself, plus the small hours after it, to write and submit that day's log. <strong>Logging your own day as you live it can never DQ you.</strong></li>
+      <li><strong>Auto-DQ if the day's goals are first written after that 5:00 AM gate</strong> — or if the gate passes with nothing written at all.</li>
+      <li>Goals save the instant you type them. The time your first goal was written is what counts against the gate, and it's shown on the leaderboard for everyone to see.</li>
     </ul>
 
     <h2>Core principles</h2>
@@ -909,30 +952,67 @@ document.getElementById('legacyImportBtn').addEventListener('click', () => {
 /* ===================== boot ===================== */
 
 tickClock();
+renderGate(); // always populate the picker, so "switch" has something to show
 if (state.currentUser && ROSTER[state.currentUser]) enterApp();
-else renderGate();
 
-/* ===================== shared sync =====================
-   One store for all six people. Entries merge per-log on their _ts stamp, so two
-   phones editing different days never clobber each other; the same log edited in two
-   places resolves to whichever was saved last. Nothing here blocks the UI — if the
-   network is down the app keeps working on local storage and pushes when it returns. */
+/* ===================== shared sync (Supabase) =====================
+   One table for all six people, one row per log, merged on a `ts` stamp so two phones
+   editing different days never clobber each other and the same day edited twice resolves to
+   whichever was saved last. Nothing here blocks the UI: if the network or the backend is
+   down the app keeps working on local storage and pushes when it comes back.
 
-const SYNC_URL = 'https://jsonblob.com/api/jsonBlob/019fd23e-e9e9-75a5-99a2-6909b76c5c49';
+   This replaces jsonblob, which deleted the board's store and then started refusing to
+   create new ones (404 on the blob, 403 on create). It took a week to notice, because the
+   only signal was a small grey word in the header — hence the banner below. */
+
+// ── setup: paste these from Supabase → Project Settings → API ────────────────
+const SUPABASE_URL = '';       // e.g. 'https://abcdefghijkl.supabase.co'  (no trailing slash)
+const SUPABASE_ANON_KEY = '';  // the "anon / public" key — safe to ship in client code
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SYNC_TABLE = 'entries';
 const SYNC_POLL_MS = 15000;
 const PUSH_DEBOUNCE_MS = 1500;
+const SYNC_ALERT_AFTER_MS = 10 * 60 * 1000; // start shouting after 10 minutes of failure
 
-let syncing = false, needPush = false, pushTimer = null;
+function syncConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON_KEY); }
+function sbUrl(path) { return `${SUPABASE_URL}/rest/v1/${path}`; }
+function sbHeaders(extra) {
+  return Object.assign({
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
+  }, extra || {});
+}
+
+let syncing = false, needPush = false, pushTimer = null, firstFailAt = null;
 
 function keyOf(e) { return e.id || `${e.user}_${e.date}`; }
 
 function setSyncStatus(ok) {
   const el = document.getElementById('syncStatus');
-  if (!el) return;
-  el.className = 'sync-status ' + (ok === true ? 'ok' : ok === false ? 'bad' : '');
-  el.textContent = ok === true ? 'shared board · live'
-    : ok === false ? 'offline · saved on this device'
-    : 'connecting…';
+  if (el) {
+    el.className = 'sync-status ' + (ok === true ? 'ok' : ok === false ? 'bad' : '');
+    el.textContent = !syncConfigured() ? 'not connected · this device only'
+      : ok === true ? 'shared board · live'
+      : ok === false ? 'offline · saved on this device'
+      : 'connecting…';
+  }
+  // A silent failure is what cost everyone a week of logs. Once it's clear this isn't a
+  // blip, say so across the top of the screen where it can't be missed.
+  if (ok === true) firstFailAt = null;
+  else if (ok === false && firstFailAt === null) firstFailAt = Date.now();
+
+  const banner = document.getElementById('syncAlert');
+  if (!banner) return;
+  const stale = firstFailAt !== null && Date.now() - firstFailAt > SYNC_ALERT_AFTER_MS;
+  const show = !syncConfigured() || stale;
+  banner.hidden = !show;
+  if (show) {
+    document.getElementById('syncAlertText').textContent = !syncConfigured()
+      ? 'The shared board isn’t connected yet. Your logs are saving on this device only — nobody else can see them, and clearing your browser will lose them. Export a copy to be safe.'
+      : 'Can’t reach the shared board. Your logs are saving on this device only and aren’t reaching anyone else. Keep logging — they’ll upload when it’s back — but export a copy to be safe.';
+  }
 }
 
 function activeViewName() {
@@ -948,18 +1028,21 @@ function safeToRerender() {
 }
 
 function syncNow() {
-  if (syncing) return;
+  if (syncing || !syncConfigured()) return;
   syncing = true;
-  fetch(SYNC_URL, { cache: 'no-store' })
-    .then(r => { if (!r.ok) throw new Error('pull failed'); return r.json(); })
-    .then(doc => {
-      const remote = (doc && doc.entries) || {};
-      let changed = false, diverged = false;
+  fetch(sbUrl(`${SYNC_TABLE}?select=id,ts,payload`), { headers: sbHeaders(), cache: 'no-store' })
+    .then(r => { if (!r.ok) throw new Error('pull failed: ' + r.status); return r.json(); })
+    .then(rows => {
+      const remote = {};
+      (rows || []).forEach(row => {
+        const v = row && row.payload;
+        if (v && v.user && v.date) { v._ts = v._ts || Number(row.ts) || 0; remote[row.id] = v; }
+      });
 
+      let changed = false, diverged = false;
       Object.keys(remote).forEach(k => {
         const rv = remote[k];
-        if (!rv || !rv.user || !rv.date) return;
-        if (!afterReset(rv)) return;   // pre-reset leftovers from a stale device
+        if (!afterReset(rv)) return; // pre-reset leftovers from a stale device
         const mine = findEntry(rv.user, rv.date);
         if (!mine) { state.entries.push(rv); changed = true; }
         else if ((rv._ts || 0) > (mine._ts || 0)) {
@@ -967,33 +1050,30 @@ function syncNow() {
           changed = true;
         }
       });
-      state.entries.forEach(e => {
+
+      // Push only the rows this device has a newer version of — no rewriting the whole
+      // table every 15 seconds.
+      const outbox = state.entries.filter(afterReset).filter(e => {
         const rv = remote[keyOf(e)];
-        if (!rv || (e._ts || 0) > (rv._ts || 0)) diverged = true;
+        return !rv || (e._ts || 0) > (rv._ts || 0);
       });
-      // Stale pre-reset rows sitting in the store are themselves a reason to push.
-      if (Object.keys(remote).some(k => !afterReset(remote[k]))) diverged = true;
+      diverged = outbox.length > 0;
 
       if (changed) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        backupState();
         if (safeToRerender()) { const r = RENDERERS[activeViewName()]; r && r(); }
       }
 
       if (diverged || needPush) {
-        // Carrying only post-reset entries forward means any client running the new code
-        // actively scrubs pre-reset junk out of the shared store rather than preserving it.
-        const out = { entries: {} };
-        Object.keys(remote).forEach(k => { if (afterReset(remote[k])) out.entries[k] = remote[k]; });
-        state.entries.filter(afterReset).forEach(e => {
-          const k = keyOf(e), rv = out.entries[k];
-          if (!rv || (e._ts || 0) >= (rv._ts || 0)) out.entries[k] = e;
-        });
-        return fetch(SYNC_URL, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(out),
+        const body = outbox.map(e => ({ id: keyOf(e), ts: e._ts || 0, payload: e }));
+        if (!body.length) { needPush = false; setSyncStatus(true); return; }
+        return fetch(sbUrl(SYNC_TABLE), {
+          method: 'POST',
+          headers: sbHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+          body: JSON.stringify(body),
         }).then(r => {
-          if (!r.ok) throw new Error('push failed');
+          if (!r.ok) throw new Error('push failed: ' + r.status);
           needPush = false;
           setSyncStatus(true);
         });
@@ -1012,6 +1092,29 @@ function pushSoon() {
   pushTimer = setTimeout(syncNow, PUSH_DEBOUNCE_MS);
 }
 
+/* ===================== export / recovery ===================== */
+
+// Reads the never-merged backup, not live state, so this still works if a sync ever goes wrong.
+function exportMyData() {
+  let payload;
+  try { payload = JSON.parse(localStorage.getItem(BACKUP_KEY) || 'null'); } catch (e) { payload = null; }
+  if (!payload || !payload.entries || !payload.entries.length) {
+    payload = { savedAt: Date.now(), entries: (state.entries || []).filter(e => e.user) };
+  }
+  if (!payload.entries.length) { alert('Nothing logged on this device yet.'); return; }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `win-the-day-${state.currentUser || 'export'}-${todayStr()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+document.getElementById('syncAlertExport').addEventListener('click', exportMyData);
+document.getElementById('exportData').addEventListener('click', exportMyData);
+
 setSyncStatus(null);
 syncNow();
 setInterval(syncNow, SYNC_POLL_MS);
+setInterval(() => { if (firstFailAt !== null) setSyncStatus(false); }, 60000);

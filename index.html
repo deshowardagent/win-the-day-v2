@@ -24,6 +24,12 @@
 
 <div id="app" class="app hidden">
 
+  <div id="syncAlert" class="sync-alert" hidden>
+    <span class="sync-alert-mark">!</span>
+    <span id="syncAlertText" class="sync-alert-text"></span>
+    <button id="syncAlertExport" type="button" class="sync-alert-btn">Export my data</button>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark">WIN&nbsp;THE&nbsp;DAY</span>
@@ -40,6 +46,7 @@
       <div class="who-name" id="whoName">—</div>
       <div class="who-pair" id="whoPair">paired with —</div>
       <button class="switch-user" id="switchUser">switch</button>
+      <button class="switch-user" id="exportData">export</button>
     </div>
   </header>
 
