@@ -966,8 +966,8 @@ if (state.currentUser && ROSTER[state.currentUser]) enterApp();
    only signal was a small grey word in the header — hence the banner below. */
 
 // ── setup: paste these from the Supabase dashboard → Connect ─────────────────
-const SUPABASE_URL = '';         // e.g. 'https://abcdefghijkl.supabase.co'  (no trailing slash)
-const SUPABASE_PUBLIC_KEY = '';  // the publishable key (sb_publishable_…), or a legacy anon key.
+const SUPABASE_URL = 'https://jrftxwkkplsipdymeean.supabase.co';         // e.g. 'https://abcdefghijkl.supabase.co'  (no trailing slash)
+const SUPABASE_PUBLIC_KEY = 'sb_publishable_agimNMAWu21bjicuWE3gng_pyJreeSa';  // the publishable key (sb_publishable_…), or a legacy anon key.
                                  // Both are designed to ship in client code and both resolve to
                                  // the `anon` role, which is what the RLS policies below grant.
 // ─────────────────────────────────────────────────────────────────────────────

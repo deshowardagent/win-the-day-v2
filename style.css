@@ -296,6 +296,9 @@ input,textarea{ font-family: inherit; }
 
 /* Loud, because the quiet version of this went unnoticed for a week and cost everyone
    their logs. Sits above the header and takes up room until sync is genuinely back. */
+/* An author `display` rule beats the UA stylesheet's [hidden]{display:none}, so without this
+   the banner ignores its hidden attribute and shows even when sync is perfectly healthy. */
+.sync-alert[hidden]{ display:none; }
 .sync-alert{
   display:flex; align-items:center; gap:.7rem; flex-wrap:wrap;
   background:#3A1512; border:1px solid #F19A8E; border-left:4px solid #F19A8E;
