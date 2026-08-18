@@ -237,6 +237,11 @@ input,textarea{ font-family: inherit; }
 .status-pill.pass{ background: rgba(47,125,79,.18); color:#7BD8A0; }
 .status-pill.fail{ background: rgba(179,38,30,.18); color:#F19A8E; }
 .status-pill.dq{ background: rgba(179,38,30,.3); color:#FF8A7A; font-weight:700; }
+/* Mid-day state: goals are up and some are ticked, but the day isn't submitted yet. */
+.status-pill.progress{ background: rgba(214,142,48,.18); color:#E8B563; }
+.score-sofar{ color: var(--on-ink-mut); font-size:.8rem; font-family: var(--f-mono); }
+/* Live board: a goal already done reads as struck through. */
+.tm-goals.live li.done{ text-decoration: line-through; color: var(--on-ink-mut); }
 
 /* ---------- week ---------- */
 .week-nav{ display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; }

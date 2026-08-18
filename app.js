@@ -577,19 +577,17 @@ function renderTomorrowEditor(dstr) {
   box.appendChild(actions);
 }
 
-function renderTomorrow() {
-  const dstr = tomorrowStr();
-  const gate = deadlineFor(dstr);
-  const closed = new Date() > gate;
-  document.getElementById('tomorrowTitle').textContent = `Goals for ${prettyDate(dstr)}`;
-  renderTomorrowEditor(dstr);
-
-  const grid = document.getElementById('tomorrowGrid');
+// Everyone's five for one day, as cards. `live` mode is for a day being lived right now:
+// it shows which goals are already ticked off, which is what a partner checking in at
+// midday actually needs. Plan-ahead mode just lists what's been committed to.
+function renderPeopleGrid(dstr, grid, live) {
+  const closed = new Date() > deadlineFor(dstr);
   grid.innerHTML = '';
   Object.keys(ROSTER).forEach(key => {
     const e = findEntry(key, dstr);
     const posted = !!(e && e.goalsCreatedAt);
-    const titles = posted ? e.goals.map(g => g.title.trim()).filter(Boolean) : [];
+    const submitted = !!(e && e.submittedAt);
+    const goals = posted ? e.goals.filter(g => g.title.trim()) : [];
 
     const card = document.createElement('div');
     card.className = 'tm-card' + (posted ? ' posted' : '') + (key === state.currentUser ? ' mine' : '');
@@ -600,30 +598,49 @@ function renderTomorrow() {
     nm.className = 'tm-name';
     nm.textContent = ROSTER[key].name + (key === state.currentUser ? ' (you)' : '');
     const pill = document.createElement('span');
-    pill.className = 'tm-pill ' + (posted ? (closed ? 'locked' : 'ok') : (closed ? 'miss' : 'wait'));
-    pill.textContent = posted ? (closed ? 'locked in' : 'posted') : (closed ? 'missed the gate' : 'nothing yet');
+    if (live) {
+      pill.className = 'tm-pill ' + (submitted ? 'locked' : posted ? 'ok' : 'miss');
+      pill.textContent = submitted ? 'day submitted' : posted ? 'in progress' : 'nothing posted';
+    } else {
+      pill.className = 'tm-pill ' + (posted ? (closed ? 'locked' : 'ok') : (closed ? 'miss' : 'wait'));
+      pill.textContent = posted ? (closed ? 'locked in' : 'posted') : (closed ? 'missed the gate' : 'nothing yet');
+    }
     head.append(nm, pill);
     card.appendChild(head);
 
-    if (titles.length) {
+    if (goals.length) {
       const ol = document.createElement('ol');
-      ol.className = 'tm-goals';
-      titles.forEach(t => { const li = document.createElement('li'); li.textContent = t; ol.appendChild(li); });
+      ol.className = 'tm-goals' + (live ? ' live' : '');
+      goals.forEach(g => {
+        const li = document.createElement('li');
+        li.textContent = g.title.trim();
+        if (live && goalComplete(g)) li.className = 'done';
+        ol.appendChild(li);
+      });
       card.appendChild(ol);
       const foot = document.createElement('div');
       foot.className = 'tm-foot';
-      foot.textContent = `${titles.length} of 5 written · posted ${prettyTime(e.goalsCreatedAt)}`;
+      foot.textContent = live
+        ? `${completedCount(e)} of 5 done · posted ${prettyTime(e.goalsCreatedAt)}`
+        : `${goals.length} of 5 written · posted ${prettyTime(e.goalsCreatedAt)}`;
       card.appendChild(foot);
     } else {
       const empty = document.createElement('p');
       empty.className = 'tm-empty';
       empty.textContent = closed
         ? 'Nothing posted before the gate closed — this day is a DQ.'
-        : 'Has not posted tomorrow’s goals yet.';
+        : live ? 'Has not posted today’s goals yet.' : 'Has not posted tomorrow’s goals yet.';
       card.appendChild(empty);
     }
     grid.appendChild(card);
   });
+}
+
+function renderTomorrow() {
+  const dstr = tomorrowStr();
+  document.getElementById('tomorrowTitle').textContent = `Goals for ${prettyDate(dstr)}`;
+  renderTomorrowEditor(dstr);
+  renderPeopleGrid(dstr, document.getElementById('tomorrowGrid'), false);
 }
 
 /* ===================== LEADERBOARD view ===================== */
@@ -637,27 +654,43 @@ function renderLeaderboard() {
   const dstr = todayStr();
   const rows = Object.keys(ROSTER).map(key => {
     const e = findEntry(key, dstr);
-    const base = { key, name: ROSTER[key].name, postedAt: e ? e.goalsCreatedAt : null };
-    if (!e || !e.submittedAt) return { ...base, pct: -1, status: null, submitted: false, submittedAt: null };
-    const { pct, status } = scoreOf(e);
-    return { ...base, pct, status, submitted: true, submittedAt: e.submittedAt };
-  }).sort((a, b) => b.pct - a.pct);
+    const posted = !!(e && e.goalsCreatedAt);
+    const submitted = !!(e && e.submittedAt);
+    const base = {
+      key, name: ROSTER[key].name, posted, submitted,
+      postedAt: e ? e.goalsCreatedAt : null, submittedAt: e ? e.submittedAt : null,
+      done: e ? completedCount(e) : 0,
+    };
+    if (submitted) { const { pct, status } = scoreOf(e); return { ...base, pct, status }; }
+    // Mid-day, someone has written their five and ticked some off. Calling that "not logged"
+    // — the same words used for someone who posted nothing — hid most of the board from
+    // everyone and made a working sync look broken. In-progress is its own state.
+    if (posted) return { ...base, pct: -1, status: 'progress' };
+    return { ...base, pct: -2, status: null };
+  }).sort((a, b) => (b.pct - a.pct) || (b.done - a.done));
 
   const topPct = rows.reduce((m, r) => (r.submitted && r.status !== 'dq') ? Math.max(m, r.pct) : m, -1);
   // "Goals posted" is the honesty column: the gate no longer punishes a late write, so the
   // time it went up is what shows whether someone planned the day or backfilled it.
   let html = '<thead><tr><th>Name</th><th>Score</th><th>Status</th><th>Goals posted</th><th>Submitted at</th></tr></thead><tbody>';
   rows.forEach(r => {
+    const score = r.submitted ? `${r.pct}%`
+      : r.posted ? `<span class="score-sofar">${r.done * 20}% so far</span>`
+      : '—';
+    const status = r.submitted ? statusPill(r.status)
+      : r.posted ? `<span class="status-pill progress">${r.done}/5 DONE</span>`
+      : 'nothing posted';
     html += `<tr class="${r.submitted && r.status !== 'dq' && r.pct === topPct && topPct > 0 ? 'top-row' : ''}">
       <td>${r.name}</td>
-      <td>${r.submitted ? r.pct + '%' : '—'}</td>
-      <td>${r.submitted ? statusPill(r.status) : 'not logged'}</td>
+      <td>${score}</td>
+      <td>${status}</td>
       <td>${prettyTime(r.postedAt)}</td>
       <td>${prettyTime(r.submittedAt)}</td>
     </tr>`;
   });
   html += '</tbody>';
   document.getElementById('leaderboardTable').innerHTML = html;
+  renderPeopleGrid(dstr, document.getElementById('todayGrid'), true);
 }
 
 /* ===================== WEEK view ===================== */
